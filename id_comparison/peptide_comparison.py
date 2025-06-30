@@ -7,13 +7,13 @@ from matplotlib_venn import venn2,venn3
 from pyteomics import pepxml,mzml,mgf
 
 ### paths & params ###
-FRAG_SEARCH = "D:/Manish/projects/umpire_data/dia_extracted/astral_extracted_fragpipe/HEK/2p5ms/ion.tsv"
-MAESTRO_SEARCH_CLUS = 'D:Manish/projects/umpire_data/maestro/HEK/MAESTRO-HEK_w_clustering.tsv'
-MAESTRO_SEARCH_NOCLUS = 'D:Manish/projects/umpire_data/maestro/HEK/MAESTRO-HEK_no_clustering.tsv'
-SPLIT_GROUPS = 'G1|G2|G3'
-MZML_PATHS = [f'D:/Manish/projects/umpire_data/dia_extracted/astral_extracted_fragpipe/HEK/2p5ms/20230320_OLEP08_1000ngHeK_uPAC_180k-30min_MontBlanc_2p5ms_0p5_2Th_0{j}_Q{i}.mzml' for i in range(1, 4) for j in range(1, 4)]
-FRAG_PEPXML = [f'D:/Manish/projects/umpire_data/dia_extracted/astral_extracted_fragpipe/HEK/2p5ms/20230320_OLEP08_1000ngHeK_uPAC_180k-30min_MontBlanc_2p5ms_0p5_2Th_0{j}_Q{i}.pepXML' for i in range(1,4) for j in range(1, 4)]
-O_PATH = './HEK_2p5ms_Comparison/'
+FRAG_SEARCH = "E:/Users/Manish/astral/astral_data/HEK/fragpipe/3p5ms/ion.tsv"
+MAESTRO_SEARCH_CLUS = 'D:Manish/projects/umpire_data/maestro/HEK/dia/2p5ms/Maestro-HEK_DIA_Clustering-identified_variants_merged_protein_regions-main.tsv'
+MAESTRO_SEARCH_NOCLUS = 'D:Manish/projects/umpire_data/maestro/HEK/dia/2p5ms/Maestro-HEK_DIA_No_Clustering-identified_variants_merged_protein_regions-main.tsv'
+SPLIT_GROUPS = 'G4|G5|G6'
+MZML_PATHS = [f'E:/Users/Manish/astral/astral_data/HEK/fragpipe/3p5ms/20230320_OLEP08_1000ngHeK_uPAC_180k-30min_MontBlanc_3p5ms_0p5_2Th_0{j}_Q{i}.mzml' for i in range(1, 4) for j in range(1, 4)]
+FRAG_PEPXML = [f'E:/Users/Manish/astral/astral_data/HEK/fragpipe/3p5ms/20230320_OLEP08_1000ngHeK_uPAC_180k-30min_MontBlanc_3p5ms_0p5_2Th_0{j}_Q{i}.pepXML' for i in range(1,4) for j in range(1, 4)]
+O_PATH = 'D:Manish/projects/umpire_data/HEK_3p5ms_Fragtide_Comparison/'
 NO_CLUS = True
 
 if not os.path.exists(O_PATH):
@@ -27,42 +27,18 @@ if NO_CLUS:
 
 ### standardize peptides ###
 
-# convert fragpipe to standard pep mod format
+# convert fragpipe unmodified pep + parent mass
 # TODO: replace preceding aa character
 def standardize_mods(row):
-    if row['Assigned Modifications'] is np.nan:
-        return row['Peptide Sequence']
-
-    mods = row['Assigned Modifications'].split(',')
     peptide = row['Peptide Sequence']
-    for mod in mods:
-        mod = mod.strip()
-        if 'N-term' in mod:
-            match = re.search(r'\(([-+]?[0-9]*\.?[0-9]+)\)', mod)
-            peptide = f'[{match.group(1)}]{peptide}'
-        else:
-            match = re.match(r'^(\d+)([A-Z])\(([-+]?[0-9]*\.?[0-9]+)\)$', mod).groups()
-            loc = int(match[0])
-            ins = f'({match[1]},{match[2]})'
-            index = 0
-            i = 0
-            while i < loc:
-                if peptide[index] == '(':
-                    while peptide[index] != ')':
-                        index += 1
-                    index += 1
-                i += 1
-                index += 1
-            peptide = f'{peptide[:index]}{ins}{peptide[index:]}'
-
-    return peptide
+    parent_mass = int(row['Observed Mass'])
+    return f'{peptide}'
 
 # maestro: get rid of brackets and n and c terminus annots
 def process_sequence(row):
-    peptide = row['Peptide'][2:-2]
-    peptide = peptide.replace('{', '[')
-    peptide = peptide.replace('}', ']')
-    return peptide
+    peptide = str(row['Unmodified_sequence']).strip('.')
+    parent_mass = int(row['Parent_mass_for_variant'])
+    return f'{peptide}'
 
 # maestro: handle groups
 def split(df, pep):
@@ -71,32 +47,10 @@ def split(df, pep):
 
 # standardize pepXML from MSFragger
 def standardize_psm_peps(row):
-    mods = row['search_hit'][0]['modifications']
     peptide = row['search_hit'][0]['peptide']
-    if not mods:
-        return peptide
+    parent_mass = int(row['precursor_neutral_mass'])
 
-    mod_peptide = peptide
-    offset = 0
-
-
-    for mod in sorted(mods, key=lambda x: x['position']):
-        loc = mod['position']
-        mass = mod['mass']
-
-        if loc == 0:
-            # N-terminal mod: prepend [mass]
-            mod_peptide = f'[{mass}]{mod_peptide}'
-            offset += len(f'[{mass}]')
-        else:
-
-            idx = loc - 1 + offset
-            aa = mod_peptide[idx]
-            mod_str = f'({aa}, {mass})'
-            mod_peptide = mod_peptide[:idx] + mod_str + mod_peptide[idx+1:]
-            offset += len(mod_str) - 1  # 1 char removed, mod_str inserted
-
-    return mod_peptide
+    return f'{peptide}'
 
 
 ### generate venn diagrams ###
@@ -118,6 +72,20 @@ def plot_venn3(maestro_peps, maestro_nc_peps, frag_peps):
     )
     plt.tight_layout()
     plt.savefig(f'{O_PATH}/Venn.png')
+    plt.close()
+
+def plot_bar(q1_nums, q2_nums, q3_nums):
+    quality_scores = ['Q1', 'Q2', 'Q3']
+    num_peptides = [q1_nums, q2_nums, q3_nums]
+
+    # Plotting
+    plt.figure(figsize=(6, 4))
+    plt.bar(quality_scores, num_peptides)
+    plt.xlabel('Quality Score')
+    plt.ylabel('Number of Peptide Variants')
+    plt.title('Peptide Variants by Quality Tier')
+    plt.tight_layout()
+    plt.savefig(f'{O_PATH}/bar.png')
     plt.close()
 
 
@@ -167,22 +135,27 @@ def main():
         # union, difference
         maestro_union = maestro_peps.union(maestro_no_clus_peps)
         frag_maestro_diff = frag_peps.difference(maestro_union)
-
-        count = 0
-        for pep in frag_maestro_diff:
-            if '(' in pep or '[' in pep:
-                count += 1
-        print(f'% PTM in difference: {count/len(frag_maestro_diff)}')
-
+        print(f'number of exclusive peptides: {len(frag_maestro_diff)}')
 
 
         # get spectrum ids
         keep_ids = set()
+        count_q1 = set()
+        count_q2 = set()
+        count_q3 = set()
         for psm_path in FRAG_PEPXML:
             psm = pd.DataFrame(pepxml.read(psm_path))
             psm_peps = psm.apply(standardize_psm_peps, axis=1)
             filter = psm_peps.isin(frag_maestro_diff)
             keep_ids.update(set(psm.loc[filter, 'spectrumNativeID']))
+            if 'Q1' in psm_path:
+                count_q1.update(hit[0]['peptide'] for hit in psm.loc[filter, 'search_hit'] if hit)
+            elif 'Q2' in psm_path:
+                count_q2.update(hit[0]['peptide'] for hit in psm.loc[filter, 'search_hit'] if hit)
+            else:
+                count_q3.update(hit[0]['peptide'] for hit in psm.loc[filter, 'search_hit'] if hit)
+
+        plot_bar(len(count_q1), len(count_q2), len(count_q3))
 
         # write spectra
         mgf.write(combined_selected_spectra(MZML_PATHS, keep_ids), f'{O_PATH}/subset.mgf')
