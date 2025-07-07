@@ -6,6 +6,7 @@ from matplotlib_venn import venn2
 from pyteomics import mgf
 from pyteomics import mzml
 from sklearn import metrics
+import re
 
 ### paths & params ###
 DDA_PATH = 'D:Manish/projects/umpire_data/maestro/HEK/dda/MAESTRO-HEK_DDA-identified_variants_merged_protein_regions-main.tsv'
@@ -84,7 +85,9 @@ def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
 
     return combined
 
-def cosine(dda_spec, dia_spec):
+def cosine(row):
+    dda_spec = row['dda', 'spectrum']
+    dia_spec = row['dia', 'spectrum']
     vec_size = max(set(dda_spec.keys()).union(dia_spec.keys()))
     dda_vec = np.zeros(int(vec_size+2))
     for key, val in dda_spec.items():
@@ -111,40 +114,60 @@ def retrieve_spectrum(file, target, filetype):
     return None
 
 
+def retrieve_spectra(result, file, filetype):
+    if filetype == 'mgf':
+        with mgf.read(file) as f:
+            for spectrum in f:
+                title = spectrum.get('params', {}).get('title', '')
+                match = re.search(r'Q2\.(\d+)', title)
+                if match:
+                    scan_number = match.group(1)
+                    if scan_number in result:
+                        result[scan_number] = dict(zip(spectrum['m/z array'], spectrum['intensity array']))
+
+    elif filetype == 'mzml':
+        with mzml.MzML(file) as f:
+            for spectrum in f:
+                spec_id = spectrum.get('id', '')
+                match = re.search(r'scan=(\d+)', spec_id)
+                if match:
+                    scan_number = match.group(1)
+                    if scan_number in result:
+                        result[scan_number] = dict(zip(spectrum['m/z array'], spectrum['intensity array']))
+
+    return result
 
 
 def compute_similarity(overlap_df):
-    count = 0
     dda_files = set(overlap_df['dda', 'Representative_Filename'])
     dia_files = set(overlap_df['dia', 'Representative_Filename'])
-    scores = {'Q1': [], 'Q2': [], 'Q3': []}
+
+    # extract spectra
+    dda_dict = {str(key) : None for key in overlap_df['dda', 'Representative_Scan']}
     for dda_file in dda_files:
-        dda_filt_df = overlap_df[overlap_df['dda', 'Representative_Filename'] == dda_file]
-        for dia_file in dia_files:
-            tot_filt_df = dda_filt_df[dda_filt_df['dia', 'Representative_Filename'] == dia_file]
-            for _, row in tot_filt_df.iterrows():
-                dda_target = row['dda', 'Representative_Scan']
-                dia_target = row['dia', 'Representative_Scan']
-                dda_file = os.path.join(DDA_DIR, os.path.basename(dda_file))
-                dia_file = os.path.join(DIA_DIR, os.path.basename(dia_file))
+        dda_file = os.path.join(DDA_DIR, os.path.basename(dda_file))
+        dda_dict = retrieve_spectra(dda_dict, dda_file, DDA_FILE_TYPE)
+        print(f'Processed {dda_file}')
+    overlap_df[('dda', 'spectrum')] = overlap_df[('dda', 'Representative_Scan')].astype(str).map(dda_dict)
 
-                dda_spec = retrieve_spectrum(dda_file, str(dda_target), DDA_FILE_TYPE)
-                dia_spec = retrieve_spectrum(dia_file, str(dia_target), DIA_FILE_TYPE)
+    dia_dict = {str(key) : None for key in overlap_df['dia', 'Representative_Scan']}
+    for dia_file in dia_files:
+        dia_file = os.path.join(DIA_DIR, os.path.basename(dia_file))
+        dia_dict = retrieve_spectra(dia_dict, dia_file, DIA_FILE_TYPE)
+        print(f'Processed {dia_file}')
 
-                if not dda_spec or not dia_spec:
-                    continue
-                if row['dda', 'Charge'] != row['dia', 'Charge']:
-                    continue
+    overlap_df[('dia', 'spectrum')] = overlap_df[('dia', 'Representative_Scan')].astype(str).map(dia_dict)
 
-                score = cosine(dda_spec, dia_spec)
-                if 'Q1' in dia_file:
-                    scores['Q1'].append(score)
-                elif 'Q2' in dia_file:
-                    scores['Q2'].append(score)
-                else:
-                    scores['Q3'].append(score)
-                count += 1
-                print(f'Processed {count} of {len(overlap_df)}')
+    # filter None spectrums + match charges
+    overlap_df = overlap_df.dropna()
+    charge_match = overlap_df[('dda', 'Charge')] == overlap_df[('dia', 'Charge')]
+    overlap_df = overlap_df[charge_match]
+
+    scores = dict()
+    for quality in ['Q1', 'Q2', 'Q3']:
+        q_filt_df = overlap_df[overlap_df['dia', 'Representative_Filename'].str.contains(quality)]
+        scores[quality] = q_filt_df.apply(cosine, axis=1)
+
     return scores
 
 def main():

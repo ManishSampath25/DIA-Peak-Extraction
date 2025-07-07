@@ -28,7 +28,7 @@ if NO_CLUS:
 ### standardize peptides ###
 
 # convert fragpipe unmodified pep + parent mass
-# TODO: replace preceding aa character
+# unmodified peptide comparison
 def standardize_mods(row):
     peptide = row['Peptide Sequence']
     parent_mass = int(row['Observed Mass'])
