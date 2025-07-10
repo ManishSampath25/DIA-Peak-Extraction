@@ -19,13 +19,20 @@ DIA_FILE_TYPE = 'mgf'
 SPLIT_REP_GROUPS = ''
 
 
-### standardize mods ###
+# standardize mods for venn diagrams
 def standardize(row):
     seq = row['Unmodified_sequence']
     mass_offset = row['Sum_of_peptide_mass_offsets']
     return f'{seq}{mass_offset}'
 
-### venn ###
+# standardize mods and charge to match spectra
+def standardize_charge(row):
+    seq = row['Unmodified_sequence']
+    charge = row['Charge']
+    mass_offset = row['Sum_of_peptide_mass_offsets']
+    return f'{seq}({mass_offset})({charge})'
+
+# venn diagram for peptide variant level comparisons
 def plot_venn2(dda_peps, dia_peps):
     plt.figure(figsize=(6, 6))
     venn2(
@@ -36,6 +43,7 @@ def plot_venn2(dda_peps, dia_peps):
     plt.savefig(f'{O_PATH}/Venn.png')
     plt.close()
 
+# bar graph for shared peptides in different quality tiers
 def plot_bar(dda_seqs, dia_seqs, dia):
     dda_seqs = set(dda_seqs)
     dia_seqs_q1 = set(dia_seqs[dia['DisplayRep_Filename'].str.contains('Q1')])
@@ -49,18 +57,16 @@ def plot_bar(dda_seqs, dia_seqs, dia):
     quality_scores = ['Q1', 'Q2', 'Q3']
     num_peptides = [q1_nums, q2_nums, q3_nums]
 
-    # Plotting
     plt.figure(figsize=(6, 4))
     plt.bar(quality_scores, num_peptides)
     plt.xlabel('Quality Score')
     plt.ylabel('Number of Peptide Variants')
-    plt.title('Peptide Variants by Quality Tier')
+    plt.title('Shared DDA/DIA Peptide Variants by Quality Tier')
     plt.tight_layout()
     plt.savefig(f'{O_PATH}/bar.png')
     plt.close()
 
-# This assumes that there is no duplicates in either dda or dia, which shouldn't be a problem since we are working at
-# the variant level
+# match spectra with the same charge state, mod mass, and sequence
 def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
     # Drop duplicates: keep first occurrence for each peptide
     dda_map = dda.copy()
@@ -75,7 +81,7 @@ def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
     dda_filtered = dda_filtered.reindex(int_peps)
     dia_filtered = dia_filtered.reindex(int_peps)
 
-    cols = ['Representative_Filename', 'Representative_Scan', 'Charge']
+    cols = ['Representative_Filename', 'Representative_Scan', 'Charge', 'Peptide']
 
     combined = pd.concat(
         [dda_filtered[cols], dia_filtered[cols]],
@@ -98,32 +104,29 @@ def cosine(row):
     return np.dot(dda_vec, dia_vec) / (np.linalg.norm(dda_vec) * np.linalg.norm(dia_vec))
 
 
-def retrieve_spectrum(file, target, filetype):
-    if filetype == 'mgf':
-        with mgf.read(file) as f:
-            for spectrum in f:
-                title = spectrum.get('params', {}).get('title', '')
-                if target in title:
-                    return dict(zip(spectrum['m/z array'], spectrum['intensity array']))
-    elif filetype == 'mzml':
-        with mzml.MzML(file) as f:
-            for spectrum in f:
-                spec_id = spectrum.get('id', '')
-                if target in spec_id:
-                    return dict(zip(spectrum['m/z array'], spectrum['intensity array']))
-    return None
 
-
+# retrieve spectra per file
+# regex works
 def retrieve_spectra(result, file, filetype):
     if filetype == 'mgf':
-        with mgf.read(file) as f:
-            for spectrum in f:
-                title = spectrum.get('params', {}).get('title', '')
-                match = re.search(r'Q2\.(\d+)', title)
-                if match:
-                    scan_number = match.group(1)
-                    if scan_number in result:
-                        result[scan_number] = dict(zip(spectrum['m/z array'], spectrum['intensity array']))
+        if 'Cycle' in file:
+            with mgf.read(file) as f:
+                for spectrum in f:
+                    title = spectrum.get('params', {}).get('title', '')
+                    match = re.search(r'Cycle_0[123]\.(\d+)\.', title)
+                    if match:
+                        scan_number = match.group(1)
+                        if scan_number in result:
+                            result[scan_number] = dict(zip(spectrum['m/z array'], spectrum['intensity array']))
+        else:
+            with mgf.read(file) as f:
+                for spectrum in f:
+                    title = spectrum.get('params', {}).get('title', '')
+                    match = re.search(r'Q[123]\.(\d+)\.', title)
+                    if match:
+                        scan_number = match.group(1)
+                        if scan_number in result:
+                            result[scan_number] = dict(zip(spectrum['m/z array'], spectrum['intensity array']))
 
     elif filetype == 'mzml':
         with mzml.MzML(file) as f:
@@ -137,28 +140,47 @@ def retrieve_spectra(result, file, filetype):
 
     return result
 
-
 def compute_similarity(overlap_df):
     dda_files = set(overlap_df['dda', 'Representative_Filename'])
     dia_files = set(overlap_df['dia', 'Representative_Filename'])
 
-    # extract spectra
-    dda_dict = {str(key) : None for key in overlap_df['dda', 'Representative_Scan']}
+    # extracts dda spectra
     for dda_file in dda_files:
-        dda_file = os.path.join(DDA_DIR, os.path.basename(dda_file))
-        dda_dict = retrieve_spectra(dda_dict, dda_file, DDA_FILE_TYPE)
-        print(f'Processed {dda_file}')
-    overlap_df[('dda', 'spectrum')] = overlap_df[('dda', 'Representative_Scan')].astype(str).map(dda_dict)
+        file_filtered_df = overlap_df[overlap_df['dda', 'Representative_Filename'] == dda_file]
 
-    dia_dict = {str(key) : None for key in overlap_df['dia', 'Representative_Scan']}
+        dda_dict = {str(key): None for key in file_filtered_df['dda', 'Representative_Scan']}
+        dda_file_path = os.path.join(DDA_DIR, os.path.basename(dda_file))
+        dda_dict = retrieve_spectra(dda_dict, dda_file_path, DDA_FILE_TYPE)
+
+        print(f'Processed {dda_file_path}')
+
+        # boolean mask
+        mask = overlap_df['dda', 'Representative_Filename'] == dda_file
+
+        # map only to those rows
+        overlap_df.loc[mask, ('dda', 'spectrum')] = (
+            overlap_df.loc[mask, ('dda', 'Representative_Scan')]
+            .astype(str)
+            .map(dda_dict)
+        )
+
     for dia_file in dia_files:
-        dia_file = os.path.join(DIA_DIR, os.path.basename(dia_file))
-        dia_dict = retrieve_spectra(dia_dict, dia_file, DIA_FILE_TYPE)
+        file_filtered_df = overlap_df[overlap_df['dia', 'Representative_Filename'] == dia_file]
+        dia_dict = {str(key): None for key in file_filtered_df['dia', 'Representative_Scan']}
+        dia_file_path = os.path.join(DIA_DIR, os.path.basename(dia_file))
+        dia_dict = retrieve_spectra(dia_dict, dia_file_path, DIA_FILE_TYPE)
+
         print(f'Processed {dia_file}')
 
-    overlap_df[('dia', 'spectrum')] = overlap_df[('dia', 'Representative_Scan')].astype(str).map(dia_dict)
+        mask = overlap_df['dia', 'Representative_Filename'] == dia_file
+        overlap_df.loc[mask, ('dia', 'spectrum')] = (
+            overlap_df.loc[mask, ('dia', 'Representative_Scan')]
+            .astype(str)
+            .map(dia_dict)
+        )
 
     # filter None spectrums + match charges
+    # the charges should match anyways but just in case
     overlap_df = overlap_df.dropna()
     charge_match = overlap_df[('dda', 'Charge')] == overlap_df[('dia', 'Charge')]
     overlap_df = overlap_df[charge_match]
@@ -184,7 +206,9 @@ def main():
     plot_venn2(dda_seqs, dia_seqs)
     plot_bar(dda_seqs, dia_seqs, dia)
 
-    # intersect and find spectra ids
+    # restandardize, intersect and find spectra ids
+    dda_seqs = dda.apply(standardize_charge, axis=1)
+    dia_seqs = dia.apply(standardize_charge, axis=1)
     int_peps = dia_seqs[dia_seqs.isin(dda_seqs)].reset_index(drop=True)
     overlap_df = shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps)
 

@@ -9,12 +9,13 @@ import re
 # paths and params
 DDA_PATH = ''
 DIA_PATH = ''
+DDA_DIR = ''
+DIA_DIR = ''
 DDA_PSM = ''
 DIA_PSM = ''
-DIA_PEPXML_DIR = ['']
-DDA_PEPXML_DIR = ['']
 O_PATH = ''
-DDA_FILE_TYPE
+DDA_FILE_TYPE = 'mzml'
+DIA_FILE_TYPE = 'mzml'
 
 
 # Preprocess
@@ -35,6 +36,21 @@ def plot_venn2(dda_peps, dia_peps):
     plt.close()
 
 
+def dda_process_spec_file(row):
+    spectrum_file = row['Spectrum File']
+    base = str(os.path.basename(spectrum_file))
+    base = base.replace('interact-', '')
+    base = base.replace('pep.xml', '')
+    return f'{base}{DDA_FILE_TYPE}'
+
+def dia_process_spec_file(row):
+    spectrum_file = row['Spectrum File']
+    base = str(os.path.basename(spectrum_file))
+    base = base.replace('interact-', '')
+    base = base.replace('pep.xml', '')
+    return f'{base}{DIA_FILE_TYPE}'
+
+# TODO: have to change the column names
 def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
     dda_map = dda.copy()
     dda_map['peptide'] = dda_seqs
@@ -55,6 +71,9 @@ def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
         keys=['dda', 'dia']
     )
 
+    combined['dda', 'Spectrum File'] = combined.apply(dda_process_spec_file, axis=1)
+    combined['dia', 'Spectrum File'] = combined.apply(dia_process_spec_file, axis=1)
+
     return combined
 
 def cosine(row):
@@ -69,13 +88,14 @@ def cosine(row):
         dia_vec[int(key)] = val
     return np.dot(dda_vec, dia_vec) / (np.linalg.norm(dda_vec) * np.linalg.norm(dia_vec))
 
-
+# TODO: update functionality for mgfs
+# hek dda and dia are mzmls for fragpipe
 def retrieve_spectra(result, file, filetype):
     if filetype == 'mgf':
         with mgf.read(file) as f:
             for spectrum in f:
                 title = spectrum.get('params', {}).get('title', '')
-                match = re.search(r'Q2\.(\d+)', title)
+                match = re.search(r'Q[123]\.(\d+)\.', title)
                 if match:
                     scan_number = match.group(1)
                     if scan_number in result:
@@ -93,22 +113,21 @@ def retrieve_spectra(result, file, filetype):
 
     return result
 
-
 def compute_similarity(overlap_df):
     dda_files = set(overlap_df['dda', 'Spectrum File'])
     dia_files = set(overlap_df['dia', 'Spectrum File'])
 
     # extract spectra
-    dda_dict = {re.search(r'Q2\.(\d+)', title).group(1): None for title in overlap_df['dda', 'Spectrum']}
+    dda_dict = {re.search(r'Cycle_0[123].(\d+)\.', title).group(1): None for title in overlap_df['dda', 'Spectrum']}
     for dda_file in dda_files:
-        dda_file = os.path.join(DDA_PEPXML_DIR, os.path.basename(dda_file))
+        dda_file = os.path.join(DDA_DIR, os.path.basename(dda_file))
         dda_dict = retrieve_spectra(dda_dict, dda_file, DDA_FILE_TYPE)
         print(f'Processed {dda_file}')
     overlap_df[('dda', 'spectrum_array')] = overlap_df[('dda', 'Spectrum')].astype(str).map(dda_dict)
 
-    dia_dict = {re.search(r'Q2\.(\d+)', key).group(1) : None for key in overlap_df['dia', 'Spectrum']}
+    dia_dict = {re.search(r'Q[123].(\d+)\.', key).group(1) : None for key in overlap_df['dia', 'Spectrum']}
     for dia_file in dia_files:
-        dia_file = os.path.join(DIA_PEPXML_DIR, os.path.basename(dia_file))
+        dia_file = os.path.join(DIA_DIR, os.path.basename(dia_file))
         dia_dict = retrieve_spectra(dia_dict, dia_file, DIA_FILE_TYPE)
         print(f'Processed {dia_file}')
 
@@ -144,6 +163,22 @@ def main():
     overlap_df = shared_spectra(dda_psm, dia_psm, dda_seqs, dia_seqs, int_peps)
 
     scores = compute_similarity(overlap_df)
+
+    data = [scores['Q1'], scores['Q2'], scores['Q3']]
+    labels = ['Q1', 'Q2', 'Q3']
+    plt.figure(figsize=(6, 5))
+    plt.boxplot(data, labels=labels)
+    plt.title('Cosine Similarity by Quality Tier')
+    plt.ylabel('Cosine Score')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(f'{O_PATH}/HEK_boxplot.png')
+
+    return 0
+
+
+if __name__ == "__main__":
+    main()
 
 
 
