@@ -18,11 +18,17 @@ DDA_FILE_TYPE = 'mzml'
 DIA_FILE_TYPE = 'mzml'
 
 
-# Preprocess
+# preprocess
 def extract_sequences(row):
-    if row['Modified Sequence']:
-        return row['Modified Sequence']
-    return row['Peptide Sequence']
+    if row['Assigned Modifications']:
+        return f'{row['Peptide']}{row['Assigned Modifications']}'
+    return row['Peptide']
+
+def extract_sequences_charge(row):
+    if row['Assigned Modifications']:
+        return f'{row['Peptide']}({row['Assigned Modifications']})({row['Charge']})'
+    return f'{row['Peptide']}(No MO)({row['Charge']})'
+
 
 # plot venn diagram
 def plot_venn2(dda_peps, dia_peps):
@@ -35,7 +41,7 @@ def plot_venn2(dda_peps, dia_peps):
     plt.savefig(f'{O_PATH}/Venn.png')
     plt.close()
 
-
+# processing dda file names
 def dda_process_spec_file(row):
     spectrum_file = row['Spectrum File']
     base = str(os.path.basename(spectrum_file))
@@ -43,6 +49,7 @@ def dda_process_spec_file(row):
     base = base.replace('pep.xml', '')
     return f'{base}{DDA_FILE_TYPE}'
 
+# processing dia file names
 def dia_process_spec_file(row):
     spectrum_file = row['Spectrum File']
     base = str(os.path.basename(spectrum_file))
@@ -50,7 +57,6 @@ def dia_process_spec_file(row):
     base = base.replace('pep.xml', '')
     return f'{base}{DIA_FILE_TYPE}'
 
-# TODO: have to change the column names
 def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
     dda_map = dda.copy()
     dda_map['peptide'] = dda_seqs
@@ -63,7 +69,7 @@ def shared_spectra(dda, dia, dda_seqs, dia_seqs, int_peps):
     dda_filtered = dda_filtered.reindex(int_peps)
     dia_filtered = dia_filtered.reindex(int_peps)
 
-    cols = ['Spectrum File', 'Spectrum', 'Charge']
+    cols = ['Spectrum File', 'Spectrum', 'Charge', 'Peptide']
 
     combined = pd.concat(
         [dda_filtered[cols], dia_filtered[cols]],
@@ -82,10 +88,10 @@ def cosine(row):
     vec_size = max(set(dda_spec.keys()).union(dia_spec.keys()))
     dda_vec = np.zeros(int(vec_size+2))
     for key, val in dda_spec.items():
-        dda_vec[int(key)] = val
+        dda_vec[int(key)] += val
     dia_vec = np.zeros(int(vec_size+2))
     for key, val in dia_spec.items():
-        dia_vec[int(key)] = val
+        dia_vec[int(key)] += val
     return np.dot(dda_vec, dia_vec) / (np.linalg.norm(dda_vec) * np.linalg.norm(dia_vec))
 
 # TODO: update functionality for mgfs
@@ -157,6 +163,9 @@ def main():
 
     plot_venn2(dda_seqs, dia_seqs)
 
+    # align spectra by charge as well
+    dda_seqs = dda.apply(extract_sequences_charge, axis=1)
+    dia_seqs = dia.apply(extract_sequences_charge, axis=1)
     int_peps = dia_seqs[dia_seqs.isin(dda_seqs)].reset_index(drop=True)
     dda_psm = pd.read_csv(DDA_PSM, sep = '\t')
     dia_psm = pd.read_csv(DIA_PSM, sep = '\t')

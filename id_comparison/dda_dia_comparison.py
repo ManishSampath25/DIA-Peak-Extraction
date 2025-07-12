@@ -97,10 +97,10 @@ def cosine(row):
     vec_size = max(set(dda_spec.keys()).union(dia_spec.keys()))
     dda_vec = np.zeros(int(vec_size+2))
     for key, val in dda_spec.items():
-        dda_vec[int(key)] = val
+        dda_vec[int(key)] += val
     dia_vec = np.zeros(int(vec_size+2))
     for key, val in dia_spec.items():
-        dia_vec[int(key)] = val
+        dia_vec[int(key)] += val
     return np.dot(dda_vec, dia_vec) / (np.linalg.norm(dda_vec) * np.linalg.norm(dia_vec))
 
 
